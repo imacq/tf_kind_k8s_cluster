@@ -4,9 +4,9 @@ terraform {
       source  = "tehcyx/kind"
       version = ">= 0.6.0"
     }
-    helm = {
-      source  = "hashicorp/helm"
-      version = ">= 2.0.0"
+    flux = {
+      source = "fluxcd/flux"
+      version = "1.3.0"
     }
   }
 }
@@ -44,56 +44,29 @@ resource "kind_cluster" "cluster" {
 # Wait for the Kind cluster to be ready
 resource "null_resource" "wait_for_cluster" {
   depends_on = [kind_cluster.cluster]
+
+  provisioner "local-exec" {
+    command = "kubectl wait --for=condition=ready node --all --timeout=300s"
+  }
 }
 
-# Helm Release: Nginx Ingress Controller
-resource "helm_release" "nginx_ingress" {
-  depends_on = [null_resource.wait_for_cluster]
+# FluxCD bootstrap
 
-  name             = "nginx-ingress"
-  repository       = var.nginx_ingress.chart_repository
-  chart            = var.nginx_ingress.chart_name
-  version          = var.nginx_ingress.chart_version
-  namespace        = var.nginx_ingress.namespace
-  create_namespace = true
-
-  values = [templatefile("${path.root}/nginx-helm-chart-values-template.yaml", {
-    ingressClassName = var.nginx_ingress.ingress_class_name
-    replicas         = var.nginx_ingress.replicas
-  })]
+/*
+resource "github_repository" "this" {
+  name        = var.github_repository
+  description = var.github_repository
+  visibility  = "private"
+  auto_init   = false # This is extremely important as flux_bootstrap_git will not work without a repository that has been initialised
 }
+*/
 
-# Helm Release: FluxCD
-resource "helm_release" "flux" {
+resource "flux_bootstrap_git" "this" {
   depends_on = [null_resource.wait_for_cluster]
 
-  name       = "flux"
-  namespace  = "flux-system"
-  chart      = "flux2"
-  repository = "https://fluxcd-community.github.io/helm-charts"
-  version    = "2.12.0"  # Use the latest version available
-  create_namespace = true
-
-  # Installing CRDs and setting Git repository for Flux to sync from
-  set {
-    name  = "installCRDs"
-    value = "true"
-  }
-
-  set {
-    name  = "gitRepository"
-    value = var.flux_git_repository
-  }
-
-  set {
-    name  = "gitBranch"
-    value = var.flux_git_branch
-  }
-
-  set {
-    name  = "sync.interval"
-    value = "1m"
-  }
+  embedded_manifests = true
+  path               = "clusters/my-cluster"
+  namespace          = "flux-system"
 }
 
 # Local variables
